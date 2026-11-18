@@ -16,3 +16,5 @@ __pycache__/
 *.keychain-db
 .env
 .env.*
+/.build/
+/.swiftpm/
