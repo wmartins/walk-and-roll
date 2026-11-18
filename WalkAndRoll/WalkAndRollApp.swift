@@ -31,100 +31,94 @@ private struct RecorderView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            source
-            Divider()
+            if let preview = recorder.preview {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        RecordingPreviewView(preview: preview)
+                        featureMessages
+                    }
+                    .padding(.trailing, 8)
+                }
+                .frame(height: max(320, min(580, (NSScreen.main?.visibleFrame.height ?? 880) - 300)))
+                .disabled(recorder.phase != .pendingSave)
+                .allowsHitTesting(recorder.phase == .pendingSave)
+            } else {
+                source
+                Divider()
 
-            VStack(alignment: .leading, spacing: 10) {
-                Picker("Resolution", selection: $recorder.resolution) {
-                    ForEach(RecordingResolution.allCases) { resolution in
-                        Text(resolution.rawValue).tag(resolution)
-                    }
-                }
-                if let size = recorder.sourcePixelSize {
-                    Text("Source \(Int(size.width.rounded())) × \(Int(size.height.rounded())) pixels")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    if size.width < 1920 && size.height < 1080 {
-                        Text("Enlarge the window or use a Retina display to capture more detail.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                Toggle("Microphone", isOn: $recorder.microphone)
-                Toggle("System audio", isOn: $recorder.systemAudio)
-                Toggle("Show click highlights", isOn: $recorder.showClickHighlights)
-                Toggle("Show keystrokes", isOn: Binding(
-                    get: { recorder.showKeystrokes },
-                    set: { recorder.setKeystrokesEnabled($0) }
-                ))
-                if recorder.showKeystrokes {
-                    Picker("Include", selection: $recorder.keystrokeMode) {
-                        ForEach(KeystrokeMode.allCases) { mode in
-                            Text(mode.rawValue).tag(mode)
+                VStack(alignment: .leading, spacing: 10) {
+                    Picker("Export resolution", selection: $recorder.resolution) {
+                        ForEach(RecordingResolution.allCases) { resolution in
+                            Text(resolution.rawValue).tag(resolution)
                         }
                     }
-                    if recorder.keystrokeMode == .allKeys {
-                        Stepper(
-                            "Characters per group  \(recorder.keystrokeGroupLength)",
-                            value: $recorder.keystrokeGroupLength, in: 4...24, step: 4
-                        )
-                        Text("Typed text appears in the video.")
+                    if let size = recorder.sourcePixelSize {
+                        Text("Source \(Int(size.width.rounded())) × \(Int(size.height.rounded())) pixels")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                        if size.width < 1920 && size.height < 1080 {
+                            Text("Enlarge the window or use a Retina display to capture more detail.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
-                    Picker("Fade after", selection: $recorder.keystrokeDelay) {
-                        Text("1 second").tag(1.0)
-                        Text("1.5 seconds").tag(1.5)
-                        Text("2 seconds").tag(2.0)
-                        Text("3 seconds").tag(3.0)
+                    Toggle("Microphone", isOn: $recorder.microphone)
+                    Toggle("System audio", isOn: $recorder.systemAudio)
+                    Toggle("Show click highlights", isOn: $recorder.showClickHighlights)
+                    Toggle("Show keystrokes", isOn: Binding(
+                        get: { recorder.showKeystrokes },
+                        set: { recorder.setKeystrokesEnabled($0) }
+                    ))
+                    if recorder.showKeystrokes {
+                        Picker("Include", selection: $recorder.keystrokeMode) {
+                            ForEach(KeystrokeMode.allCases) { mode in
+                                Text(mode.rawValue).tag(mode)
+                            }
+                        }
+                        if recorder.keystrokeMode == .allKeys {
+                            Stepper(
+                                "Characters per group  \(recorder.keystrokeGroupLength)",
+                                value: $recorder.keystrokeGroupLength, in: 4...24, step: 4
+                            )
+                            Text("Typed text appears in the video.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Picker("Fade after", selection: $recorder.keystrokeDelay) {
+                            Text("1 second").tag(1.0)
+                            Text("1.5 seconds").tag(1.5)
+                            Text("2 seconds").tag(2.0)
+                            Text("3 seconds").tag(3.0)
+                        }
                     }
+                    Toggle("Camera", isOn: Binding(
+                        get: { recorder.cameraEnabled },
+                        set: { recorder.setCameraEnabled($0) }
+                    ))
+                    .disabled(recorder.cameraPreparing)
                 }
-                Toggle("Camera", isOn: Binding(
-                    get: { recorder.cameraEnabled },
-                    set: { recorder.setCameraEnabled($0) }
-                ))
-                .disabled(recorder.cameraPreparing)
-            }
-            .disabled(!recorder.canSetUp)
+                .disabled(!recorder.canSetUp)
 
-            if recorder.cameraPreparing {
-                ProgressView("Starting camera…").controlSize(.small)
-            } else if recorder.cameraEnabled && recorder.canSetUp {
-                HStack(alignment: .top, spacing: 16) {
-                    CameraPreview(session: recorder.cameraSession)
-                        .frame(width: 124, height: 124)
-                        .clipShape(RoundedRectangle(cornerRadius: 27))
-                        .accessibilityLabel("Live camera preview")
-                    Picker("Bubble position", selection: $recorder.cameraCorner) {
-                        ForEach(CameraCorner.allCases) { corner in
-                            Text(corner.rawValue).tag(corner)
+                if recorder.cameraPreparing {
+                    ProgressView("Starting camera…").controlSize(.small)
+                } else if recorder.cameraEnabled && recorder.canSetUp {
+                    HStack(alignment: .top, spacing: 16) {
+                        CameraPreview(session: recorder.cameraSession)
+                            .frame(width: 124, height: 124)
+                            .clipShape(RoundedRectangle(cornerRadius: 27))
+                            .accessibilityLabel("Live camera preview")
+                        Picker("Bubble position", selection: $recorder.cameraCorner) {
+                            ForEach(CameraCorner.allCases) { corner in
+                                Text(corner.rawValue).tag(corner)
+                            }
                         }
                     }
                 }
-            }
 
-            if let message = recorder.cameraMessage {
-                Text(message)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+                featureMessages
 
-            if recorder.presenterOverlayActive {
-                Text("macOS Presenter Overlay is active. Turn it off in the screen-sharing menu to use Walk & Roll’s camera bubble.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
-
-            if let message = recorder.shortcutMessage {
-                Text(message)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
             Divider()
             controls
 
@@ -157,10 +151,37 @@ private struct RecorderView: View {
             }
         }
         .padding(24)
-        .frame(width: 420)
-        .onDisappear { recorder.closeCameraPreview() }
+        .frame(width: recorder.preview == nil ? 420 : 720)
+        .onDisappear {
+            recorder.closeCameraPreview()
+            recorder.preview?.pause()
+        }
         .confirmationDialog("Discard this recording?", isPresented: $confirmingDiscard, titleVisibility: .visible) {
             Button("Discard Recording", role: .destructive) { recorder.discard() }
+        }
+    }
+
+    @ViewBuilder
+    private var featureMessages: some View {
+        if let message = recorder.cameraMessage {
+            Text(message)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+
+        if recorder.presenterOverlayActive {
+            Text("macOS Presenter Overlay is active. Turn it off in the screen-sharing menu to use Walk & Roll’s camera bubble.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+
+        if let message = recorder.shortcutMessage {
+            Text(message)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -229,7 +250,7 @@ private struct RecorderView: View {
         case .pendingSave, .choosingSaveLocation:
             VStack(alignment: .trailing, spacing: 8) {
                 HStack {
-                    Text("Recording ready to save")
+                    Text("Recording ready")
                         .foregroundStyle(.secondary)
                     Spacer()
                     Button("Discard") { confirmingDiscard = true }

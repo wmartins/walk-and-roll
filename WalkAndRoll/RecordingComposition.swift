@@ -35,6 +35,8 @@ final class RecordingCompositionInstruction: NSObject, AVVideoCompositionInstruc
     let screenID: CMPersistentTrackID
     let screenTransform: CGAffineTransform
     let screenSize: CGSize
+    let contentRect: CGRect
+    let edits: RecordingEdits
     let camera: CameraLayer?
     let clicks: [ClickHighlight]
     let keystrokes: [KeystrokeBadge]
@@ -42,17 +44,20 @@ final class RecordingCompositionInstruction: NSObject, AVVideoCompositionInstruc
 
     init(
         timeRange: CMTimeRange, screen: AVAssetTrack, screenSize: CGSize, screenTransform: CGAffineTransform,
+        contentRect: CGRect, edits: RecordingEdits,
         camera: CameraLayer?, clicks: [ClickHighlight], keystrokes: [KeystrokeBadge], keystrokeDelay: Double
     ) {
         self.timeRange = timeRange
         screenID = screen.trackID
         self.screenSize = screenSize
         self.screenTransform = screenTransform
+        self.contentRect = contentRect
+        self.edits = RecordingEdits(zooms: edits.resolvedZooms, blurredBackdrop: edits.blurredBackdrop)
         self.camera = camera
         self.clicks = clicks.sorted { $0.seconds < $1.seconds }
         self.keystrokes = keystrokes.sorted { $0.seconds < $1.seconds }
         self.keystrokeDelay = keystrokeDelay.isFinite ? max(0, keystrokeDelay) : 1.5
-        containsTweening = !clicks.isEmpty || !keystrokes.isEmpty
+        containsTweening = !clicks.isEmpty || !keystrokes.isEmpty || !edits.zooms.isEmpty
         requiredSourceTrackIDs = ([screen.trackID] + (camera.map { [$0.trackID] } ?? [])).map { NSNumber(value: $0) }
     }
 
@@ -107,6 +112,29 @@ final class RecordingCompositionInstruction: NSObject, AVVideoCompositionInstruc
     }
 }
 
+/// Sample the original screen pixels at the final scale. Bicubic interpolation
+/// keeps enlarged text edges firmer than bilinear interpolation without inventing detail.
+enum RecordingImageSampling {
+    static func transform(_ image: CIImage, by transform: CGAffineTransform) -> CIImage {
+        let scale = hypot(transform.a, transform.b)
+        guard scale > 1.0001 else {
+            return image.transformed(by: transform, highQualityDownsample: true)
+        }
+        let orientation = CGAffineTransform(a: transform.a / scale, b: transform.b / scale,
+                                            c: transform.c / scale, d: transform.d / scale, tx: 0, ty: 0)
+        let resize = CIFilter.bicubicScaleTransform()
+        resize.inputImage = image.clampedToExtent().transformed(by: orientation)
+        resize.scale = Float(scale)
+        resize.aspectRatio = 1
+        resize.parameterB = 0
+        // Zero outer-lobe weight avoids dark/bright halos around high-contrast UI text.
+        resize.parameterC = 0
+        let scaled = resize.outputImage ?? image.transformed(by: CGAffineTransform(scaleX: scale, y: scale)
+            .concatenating(orientation))
+        return scaled.transformed(by: CGAffineTransform(translationX: transform.tx, y: transform.ty))
+    }
+}
+
 final class RecordingCompositor: NSObject, AVVideoCompositing {
     private let context = CIContext()
     private let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
@@ -142,20 +170,37 @@ final class RecordingCompositor: NSObject, AVVideoCompositing {
         }
 
         let bounds = CGRect(origin: .zero, size: request.renderContext.size)
-        var image = CIImage(cvPixelBuffer: screen)
-            .clampedToExtent()
-            .transformed(by: instruction.screenTransform)
-            .cropped(to: bounds)
         let seconds = (request.compositionTime - instruction.timeRange.start).seconds
+        let content = instruction.contentRect
+        let original = CIImage(cvPixelBuffer: screen)
+        let zoom = instruction.edits.zoom(at: seconds)
+        let zoomTransform = RecordingGeometry.zoomTransform(in: content, zoom: zoom, at: seconds)
+        // Combine framing and zoom before resampling, so a 1080p edit can use
+        // every available original pixel rather than enlarging a reduced intermediate.
+        var image = RecordingImageSampling.transform(original, by: instruction.screenTransform.concatenating(zoomTransform))
+            .cropped(to: content)
         for click in activeClicks(instruction.clicks, at: seconds) {
             let point = CGPoint(
                 x: click.position.x * instruction.screenSize.width,
                 y: (1 - click.position.y) * instruction.screenSize.height
             ).applying(instruction.screenTransform)
             if let ring = ring(at: point, progress: seconds - click.seconds, canvas: bounds.size) {
-                image = ring.composited(over: image)
+                image = ring.transformed(by: zoomTransform).cropped(to: content).composited(over: image)
             }
         }
+
+        var background = CIImage(color: CIColor(red: 0, green: 0, blue: 0)).cropped(to: bounds)
+        if instruction.edits.blurredBackdrop {
+            let scale = max(bounds.width / content.width, bounds.height / content.height)
+            let foreground = RecordingImageSampling.transform(original, by: instruction.screenTransform).cropped(to: content)
+            let fill = foreground.transformed(by: CGAffineTransform(translationX: -content.midX, y: -content.midY)
+                .concatenating(CGAffineTransform(scaleX: scale, y: scale))
+                .concatenating(CGAffineTransform(translationX: bounds.midX, y: bounds.midY)))
+            background = fill.clampedToExtent()
+                .applyingGaussianBlur(sigma: min(bounds.width, bounds.height) * 0.025)
+                .cropped(to: bounds)
+        }
+        image = image.composited(over: background)
 
         if let layer = instruction.camera,
            layer.timeRange.containsTime(request.compositionTime),

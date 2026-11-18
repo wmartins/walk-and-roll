@@ -14,6 +14,8 @@
 		800000000000000000000006 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 800000000000000000000018; };
 		800000000000000000000007 /* RecordingInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = 800000000000000000000019; };
 		800000000000000000000008 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = 80000000000000000000001A; };
+		800000000000000000000009 /* RecordingEdits.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80000000000000000000001B; };
+		80000000000000000000000A /* RecordingPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80000000000000000000001C; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -27,6 +29,8 @@
 		800000000000000000000018 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		800000000000000000000019 /* RecordingInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingInput.swift; sourceTree = "<group>"; };
 		80000000000000000000001A /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = SOURCE_ROOT; };
+		80000000000000000000001B /* RecordingEdits.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingEdits.swift; sourceTree = "<group>"; };
+		80000000000000000000001C /* RecordingPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingPreview.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -35,7 +39,7 @@
 
 /* Begin PBXGroup section */
 		800000000000000000000030 = {isa = PBXGroup; children = (800000000000000000000031, 800000000000000000000032, 80000000000000000000001A); sourceTree = "<group>"; };
-		800000000000000000000031 /* WalkAndRoll */ = {isa = PBXGroup; children = (800000000000000000000011, 800000000000000000000012, 800000000000000000000013, 800000000000000000000014, 800000000000000000000016, 800000000000000000000017, 800000000000000000000018, 800000000000000000000019); path = WalkAndRoll; sourceTree = "<group>"; };
+		800000000000000000000031 /* WalkAndRoll */ = {isa = PBXGroup; children = (800000000000000000000011, 800000000000000000000012, 800000000000000000000013, 800000000000000000000014, 800000000000000000000016, 800000000000000000000017, 800000000000000000000018, 800000000000000000000019, 80000000000000000000001B, 80000000000000000000001C); path = WalkAndRoll; sourceTree = "<group>"; };
 		800000000000000000000032 /* Products */ = {isa = PBXGroup; children = (800000000000000000000015); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
@@ -78,7 +82,7 @@
 		800000000000000000000060 = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
-			files = (800000000000000000000001, 800000000000000000000002, 800000000000000000000003, 800000000000000000000004, 800000000000000000000005, 800000000000000000000007);
+			files = (800000000000000000000001, 800000000000000000000002, 800000000000000000000003, 800000000000000000000004, 800000000000000000000005, 800000000000000000000007, 800000000000000000000009, 80000000000000000000000A);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */

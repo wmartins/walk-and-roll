@@ -36,6 +36,7 @@ final class Recorder: NSObject {
     private(set) var cameraMessage: String?
     private(set) var presenterOverlayActive = false
     private(set) var canSaveWithoutCamera = false
+    private(set) var preview: RecordingPreview?
 
     var canSetUp: Bool { phase == .idle || phase == .ready }
     var cameraSession: AVCaptureSession { camera.session }
@@ -189,7 +190,8 @@ final class Recorder: NSObject {
         let pixelScale = capturePixelScale(for: filter)
         let pixels = CGSize(width: size.width * pixelScale, height: size.height * pixelScale)
         sourcePixelSize = pixels
-        let outputSize = resolution.outputSize(for: pixels)
+        // Keep native detail for later zooms even when the selected export is 1080p.
+        let outputSize = RecordingResolution.captureSize(for: pixels)
         let configuration = SCStreamConfiguration()
         configuration.width = Int(outputSize.width)
         configuration.height = Int(outputSize.height)
@@ -318,6 +320,7 @@ final class Recorder: NSObject {
 
     func save(withoutCamera: Bool = false) {
         guard phase == .pendingSave, let recordingURL else { return }
+        preview?.pause()
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.mpeg4Movie]
         panel.nameFieldStringValue = "Walk & Roll \(Date.now.formatted(.iso8601.year().month().day()))"
@@ -330,7 +333,8 @@ final class Recorder: NSObject {
                 phase = .pendingSave
                 return
             }
-            export(recordingURL, camera: withoutCamera ? nil : cameraOverlay, to: destination)
+            if withoutCamera { preview?.includesCamera = false }
+            export(recordingURL, camera: preview?.includesCamera == false ? nil : cameraOverlay, to: destination)
         }
     }
 
@@ -354,13 +358,14 @@ final class Recorder: NSObject {
             do {
                 try await MP4Export.save(
                     source, camera: overlay, clicks: clicks, keystrokes: keystrokes,
-                    keystrokeDelay: keystrokeDelay, resolution: resolution, to: destination
+                    keystrokeDelay: keystrokeDelay, resolution: preview?.resolution ?? resolution,
+                    edits: preview?.edits ?? RecordingEdits(), to: destination
                 ) { fraction in
                     self.progress = fraction
                 }
-                removeRecording()
                 savedURL = destination
-                phase = .idle
+                phase = .pendingSave
+                message = "MP4 saved. You can keep editing and export again, or discard this recording."
             } catch {
                 phase = .pendingSave
                 if !Task.isCancelled, overlay != nil { canSaveWithoutCamera = true }
@@ -422,6 +427,9 @@ final class Recorder: NSObject {
     }
 
     private func removeRecording() {
+        preview?.close()
+        preview = nil
+        savedURL = nil
         if let recordingURL {
             try? FileManager.default.removeItem(at: recordingURL)
         }
@@ -629,6 +637,10 @@ extension Recorder: SCRecordingOutputDelegate, SCStreamDelegate {
             screenClock = nil
             clearCapture()
             await finishCamera(screenStart: screenStart)
+            if let recordingURL {
+                preview = RecordingPreview(source: recordingURL, camera: cameraOverlay, clicks: clicks,
+                                           keystrokes: keystrokes, keystrokeDelay: keystrokeDelay, resolution: resolution)
+            }
             phase = .pendingSave
         }
     }

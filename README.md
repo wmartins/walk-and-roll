@@ -14,7 +14,10 @@ Walk & Roll is a native macOS recorder for product demos and walkthroughs. Captu
 - Configure microphone and system audio independently.
 - Add a rounded camera bubble in any corner.
 - Highlight clicks and display commands or grouped typing, with counts for repeated keys.
-- Export 30 fps H.264 MP4 with mixed AAC audio when enabled.
+- Play and scrub a preview after recording, with the camera and input overlays.
+- Add focal-point zooms with eased motion, adjustable duration and magnification.
+- Add an optional softly blurred backdrop around aspect-fitted footage.
+- Export 30 fps H.264 MP4 with mixed AAC audio when enabled, then keep editing and export again.
 - Preserve native capture dimensions up to 4K, or fit the recording into 1080p.
 
 ## Build and run
@@ -54,9 +57,13 @@ The project's default Xcode signing configuration is ad hoc. Use the commands ab
 1. Choose **Choose Source…** and select a window or display. The app shows the source title, app name, and pixel size when available.
 2. Set **Microphone** and **System audio**. Microphone capture uses the Mac's default input. Enable **Camera** and choose a bubble position if desired.
 3. Enable **Show click highlights** or **Show keystrokes**. Keystrokes support **Commands only** and **All keystrokes**, adjustable typing groups, and a fade delay. Consecutive special keys and commands show counts such as `↩ ×3` or `⌘C ×2`.
-4. Select **Start Recording**, then **Stop Recording** and **Save MP4…**. A canceled or failed export can be retried while the app remains open.
+4. Select **Start Recording**, then **Stop Recording**. The recording opens in a playable preview. Use the scrubber to seek, choose **Add Zoom at Playhead**, and click a focal point in the footage.
+5. Select a zoom to change its duration or magnification, or choose **Remove Zoom**. Zooms ease in and out and stay within the source bounds. A later zoom shortens the earlier zoom, including its ease-out; at the same start time, the most recently added zoom wins. Camera bubbles and keystroke badges stay fixed while click highlights follow the screen content.
+6. Choose **Save MP4…**. Successful, canceled, and failed exports all leave the recording available for further edits and another export while the app remains open. **Discard** releases the original recording and its edits so you can record again. Edits are held for the current session and are not restored after quitting.
 
-**Sharper (native, up to 4K)** preserves the source's native pixel size. Enlarge a small window or move it to a Retina display before selecting it to capture more detail. **1080p** fits the source into a 1920 × 1080 frame while preserving its aspect ratio.
+**Sharper (native, up to 4K)** preserves the source's native pixel size. Enlarge a small window or move it to a Retina display before selecting it to capture more detail. **1080p** fits the source within 1920 × 1080 while preserving its aspect ratio. By default, the output follows the source’s aspect ratio. Enable **Blurred backdrop (16:9 frame)** in preview to fill a widescreen canvas with a softly blurred copy behind the sharp footage. This uses a 1920 × 1080 canvas in 1080p, or a padded native canvas up to 4K in Sharper. The preview follows the selected export resolution and effects. Original screen and camera media are not modified.
+
+Zooms use the original capture pixels with bicubic enlargement for firmer text edges. Capture retains native detail up to the 4K limit even when **1080p** is selected for export, so lowering the export resolution does not reduce the original media’s detail. A 2× zoom uses half the source width and height; if that crop has fewer pixels than the output, some softness is unavoidable. A larger source window or a Retina display gives zooms more detail to work with.
 
 ## Permissions
 
