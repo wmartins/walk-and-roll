@@ -4,7 +4,7 @@
 
 <h1 align="center">Walk &amp; Roll</h1>
 
-<p align="center">Walk through your app, roll your camera, and record.</p>
+<p align="center">Walk through your app. Let the camera roll.</p>
 
 Walk & Roll is a native macOS recorder for product demos and walkthroughs. Capture a window or display, add narration and a camera bubble, and save an MP4. Recordings are processed and saved on your Mac.
 
