@@ -445,64 +445,81 @@ private struct RecorderView: View {
     }
 
     private func editor(_ preview: RecordingPreview) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    RecordingPreviewView(preview: preview)
-                    cameraMessages
-                    if let message = recorder.shortcutMessage { notice(message) }
-                }
-                .padding(.trailing, 8)
-            }
-            .frame(height: max(320, min(580, (NSScreen.main?.visibleFrame.height ?? 880) - 300)))
+        VStack(spacing: 0) {
+            RecordingPreviewView(
+                preview: preview,
+                cameraNotes: [recorder.cameraMessage,
+                              recorder.presenterOverlayActive ? "macOS Presenter Overlay is active. Turn it off in the screen-sharing menu to use Walk & Roll’s camera bubble." : nil].compactMap { $0 },
+                inputMessage: recorder.shortcutMessage,
+                capturedKeystrokeCount: recorder.showKeystrokes ? recorder.capturedKeystrokeCount : nil
+            )
             .disabled(recorder.phase != .pendingSave)
             .allowsHitTesting(recorder.phase == .pendingSave)
             Divider()
-            editorControls
-            if recorder.showKeystrokes,
-               recorder.phase == .pendingSave || recorder.phase == .choosingSaveLocation {
-                Text("\(recorder.capturedKeystrokeCount) keystrokes captured")
-                    .font(.callout).foregroundStyle(.secondary)
-            }
-            if let message = recorder.message {
-                Text(message).font(.callout).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if let url = recorder.savedURL {
-                HStack {
-                    Label(url.lastPathComponent, systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                    Spacer(minLength: 8)
-                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            VStack(alignment: .leading, spacing: 10) {
+                if let message = recorder.message {
+                    Text(message).font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .font(.callout)
+                if let url = recorder.savedURL {
+                    HStack {
+                        Text("Last saved: \(url.lastPathComponent)")
+                            .lineLimit(1).truncationMode(.middle)
+                            .help(url.path)
+                        Spacer(minLength: 12)
+                        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                    }
+                    .font(.callout).foregroundStyle(.secondary)
+                }
+                editorControls
             }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
         }
-        .padding(24)
-        .frame(width: 720)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .frame(minWidth: 640, idealWidth: 1040, maxWidth: .infinity,
+               minHeight: 480, idealHeight: 760, maxHeight: .infinity)
+        .background {
+            #if DEBUG
+            if !recorder.isSetupPreview { EditorWindowLayout() }
+            #else
+            EditorWindowLayout()
+            #endif
+        }
     }
 
     @ViewBuilder private var editorControls: some View {
         switch recorder.phase {
         case .pendingSave, .choosingSaveLocation:
             VStack(alignment: .trailing, spacing: 8) {
-                HStack {
-                    Text("Recording ready")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Discard") { confirmingDiscard = true }
+                HStack(spacing: 12) {
+                    Text("Edits stay available until you discard or quit.")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 12)
+                    Button("Discard…") { confirmingDiscard = true }
                     Button("Save MP4…") { recorder.save() }
                         .buttonStyle(.borderedProminent)
+                        .keyboardShortcut("s", modifiers: .command)
                 }
+                .controlSize(.large)
                 if recorder.canSaveWithoutCamera {
                     Button("Save Without Camera…") { recorder.save(withoutCamera: true) }
                 }
             }
             .disabled(recorder.phase == .choosingSaveLocation)
         case .exporting:
-            HStack {
-                ProgressView("Exporting MP4…", value: recorder.progress)
-                    .controlSize(.small)
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("Saving MP4…").fontWeight(.medium)
+                        Spacer()
+                        Text(recorder.progress, format: .percent.precision(.fractionLength(0)))
+                            .monospacedDigit().foregroundStyle(.secondary)
+                    }
+                    ProgressView(value: recorder.progress).controlSize(.small)
+                        .accessibilityLabel("MP4 export progress")
+                }
                 Button("Cancel Export") { recorder.cancelExport() }
             }
         default: EmptyView()
@@ -543,6 +560,37 @@ struct RecorderSetupPreviews: PreviewProvider {
     }
 }
 #endif
+
+// Apply a comfortable review size once per recording; later resizing belongs to the user.
+private struct EditorWindowLayout: NSViewRepresentable {
+    func makeNSView(context: Context) -> EditorWindowLayoutView { EditorWindowLayoutView() }
+    func updateNSView(_ view: EditorWindowLayoutView, context: Context) {}
+}
+
+private final class EditorWindowLayoutView: NSView {
+    private var applied = false
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard !applied, let window else { return }
+        applied = true
+        DispatchQueue.main.async { [weak window] in
+            guard let window, let screen = window.screen else { return }
+            let visible = screen.visibleFrame
+            let content = CGRect(origin: .zero, size: CGSize(
+                width: max(640, min(1040, visible.width - 80)),
+                height: max(480, min(760, visible.height - 100))
+            ))
+            let size = window.frameRect(forContentRect: content).size
+            let previous = window.frame
+            let origin = CGPoint(
+                x: max(visible.minX, min(visible.maxX - size.width, previous.midX - size.width / 2)),
+                y: max(visible.minY, min(visible.maxY - size.height, previous.maxY - size.height))
+            )
+            window.setFrame(CGRect(origin: origin, size: size), display: true)
+        }
+    }
+}
 
 private struct CameraPreview: NSViewRepresentable {
     let session: AVCaptureSession
