@@ -22,6 +22,8 @@ final class Recorder: NSObject {
     private(set) var progress = 0.0
     var microphone = false
     var systemAudio = false
+    private(set) var microphoneMessage: String?
+    private(set) var systemAudioMessage: String?
     var showClickHighlights = false
     private(set) var showKeystrokes = false
     var keystrokeMode = KeystrokeMode.commandsOnly
@@ -60,6 +62,16 @@ final class Recorder: NSObject {
     @ObservationIgnored private var exportTask: Task<Void, Never>?
     @ObservationIgnored private var stopIssued = false
 
+    #if DEBUG
+    // Preview fixtures never register a picker, request access, or start devices.
+    private(set) var isSetupPreview = false
+
+    private init(setupPreview: ()) {
+        super.init()
+        isSetupPreview = true
+    }
+    #endif
+
     override init() {
         super.init()
         var configuration = SCContentSharingPickerConfiguration()
@@ -71,6 +83,9 @@ final class Recorder: NSObject {
     }
 
     func chooseSource() {
+        #if DEBUG
+        guard !isSetupPreview else { return }
+        #endif
         guard canSetUp else { return }
         phase = .picking
         message = nil
@@ -100,9 +115,14 @@ final class Recorder: NSObject {
     }
 
     func start() {
+        #if DEBUG
+        guard !isSetupPreview else { return }
+        #endif
         guard phase == .ready, !cameraPreparing, let filter else { return }
         phase = .starting
         message = nil
+        microphoneMessage = nil
+        systemAudioMessage = nil
         shortcutMessage = nil
         capturedKeystrokeCount = 0
         keystrokeGrouper.reset()
@@ -117,7 +137,7 @@ final class Recorder: NSObject {
                 }
                 guard allowed else {
                     microphone = false
-                    message = "Microphone access is off. Start again to record without it, or enable Walk & Roll in System Settings → Privacy & Security → Microphone."
+                    microphoneMessage = "Microphone access is off. You can record without it, or enable Walk & Roll in System Settings → Privacy & Security → Microphone."
                     phase = .ready
                     return
                 }
@@ -130,6 +150,9 @@ final class Recorder: NSObject {
         guard canSetUp, !cameraPreparing else { return }
         cameraEnabled = enabled
         cameraMessage = nil
+        #if DEBUG
+        guard !isSetupPreview else { return }
+        #endif
         guard enabled else {
             camera.stop()
             return
@@ -164,6 +187,9 @@ final class Recorder: NSObject {
         guard canSetUp else { return }
         showKeystrokes = enabled
         shortcutMessage = nil
+        #if DEBUG
+        guard !isSetupPreview else { return }
+        #endif
         if enabled, !CGPreflightListenEventAccess(), !CGRequestListenEventAccess() {
             shortcutMessage = "Allow Walk & Roll under System Settings → Privacy & Security → Input Monitoring, then quit and reopen the app to include keystrokes."
         }
@@ -548,9 +574,13 @@ final class Recorder: NSObject {
         case .userDeclined, .missingEntitlements:
             return "Screen capture was denied. Choose a source in the macOS picker. If macOS requires it, check System Settings → Privacy & Security → Screen & System Audio Recording."
         case .failedToStartAudioCapture:
-            return "System audio couldn’t start. Check Screen & System Audio Recording in System Settings, or try with System audio off."
+            let explanation = "System audio couldn’t start. Check Screen & System Audio Recording in System Settings, or try with System audio off."
+            systemAudioMessage = explanation
+            return explanation
         case .failedToStartMicrophoneCapture:
-            return "Microphone capture couldn’t start. Check your input device and Microphone permissions, or try with Microphone off."
+            let explanation = "Microphone capture couldn’t start. Check your input device and Microphone permissions, or try with Microphone off."
+            microphoneMessage = explanation
+            return explanation
         case .noCaptureSource, .systemStoppedStream:
             return "macOS stopped sharing the source. Check that the window or display is still available."
         case .userStopped:
@@ -671,3 +701,47 @@ extension Recorder: SCRecordingOutputDelegate, SCStreamDelegate {
         }
     }
 }
+
+#if DEBUG
+extension Recorder {
+    static func renderFixture(_ scenario: String) -> Recorder {
+        let recorder = Recorder(setupPreview: ())
+        guard scenario != "empty" else { return recorder }
+        recorder.phase = .ready
+        recorder.sourceName = "Walk & Roll — Product walkthrough and recording configuration — Design review November 2026"
+        recorder.sourceApplicationName = "Safari"
+        recorder.sourcePixelSize = CGSize(width: 1800, height: 1264)
+        switch scenario {
+        case "expanded", "compact":
+            recorder.cameraEnabled = true
+            recorder.showClickHighlights = true
+            recorder.showKeystrokes = true
+            recorder.keystrokeMode = .allKeys
+        case "permissions":
+            recorder.microphoneMessage = "Microphone access is off. You can record without it, or enable Walk & Roll in System Settings → Privacy & Security → Microphone."
+            recorder.cameraMessage = "Camera access is off. You can still record, or enable Walk & Roll in System Settings → Privacy & Security → Camera."
+            recorder.showKeystrokes = true
+            recorder.shortcutMessage = "Allow Walk & Roll under System Settings → Privacy & Security → Input Monitoring, then quit and reopen the app to include keystrokes."
+        case "devices":
+            recorder.cameraMessage = "The camera couldn’t start. You can still record."
+            recorder.microphoneMessage = "Microphone capture couldn’t start. Check your input device and Microphone permissions, or try with Microphone off."
+            recorder.systemAudioMessage = "System audio couldn’t start. Check Screen & System Audio Recording in System Settings, or try with System audio off."
+        case "starting":
+            recorder.phase = .starting
+        case "cameraStarting":
+            recorder.cameraEnabled = true
+            recorder.cameraPreparing = true
+        case "recording":
+            recorder.phase = .recording
+            recorder.startedAt = ContinuousClock.now.advanced(by: .seconds(-83))
+            recorder.systemAudio = true
+            recorder.showKeystrokes = true
+            recorder.capturedKeystrokeCount = 24
+        case "stopping":
+            recorder.phase = .stopping
+        default: break
+        }
+        return recorder
+    }
+}
+#endif
