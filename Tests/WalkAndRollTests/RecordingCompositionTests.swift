@@ -7,6 +7,26 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct RecordingCompositionTests {
+    @Test("Source, preview and export preserve flat colors across the first frames")
+    func previewExportColorParity() async throws {
+        let fixture = try await MediaFixture()
+        defer { fixture.remove() }
+        let prepared = try await MP4Export.prepare(fixture.screen, resolution: .sharper)
+        let output = fixture.file("colors.mp4")
+        try await MP4Export.save(fixture.screen, resolution: .sharper, to: output) { _ in }
+        // A flat patch isolates gamma/color shifts from H.264 edge and chroma artifacts.
+        let patch = CGRect(x: 8, y: 8, width: 16, height: 16)
+        for seconds in [0.0, 1.0 / 30, 0.1, 1.5] {
+            let source = try await TestMedia.frame(fixture.screen, at: seconds)
+            let preview = try await TestMedia.frame(prepared, at: seconds)
+            let encoded = try await TestMedia.frame(output, at: seconds)
+            let sourceDifference = try TestMedia.meanDifference(source, preview, region: patch)
+            #expect(sourceDifference < 3, "Preview color mismatch at \(seconds) seconds")
+            let difference = try TestMedia.meanDifference(preview, encoded, region: patch)
+            #expect(difference < 3, "Color mismatch at \(seconds) seconds")
+        }
+    }
+
     @Test("Preview and encoded frames match throughout zoom transitions and overlaps")
     func previewExportParity() async throws {
         let fixture = try await MediaFixture()

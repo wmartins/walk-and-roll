@@ -204,6 +204,11 @@ enum MP4Export {
         video.renderSize = frameSize
         video.frameDuration = CMTime(value: 1, timescale: 30)
         video.instructions = [instruction]
+        // RecordingCompositor renders sRGB pixels. Declare the same color space
+        // for preview and export instead of letting export assume Rec. 709 gamma.
+        video.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
+        video.colorTransferFunction = AVVideoTransferFunction_IEC_sRGB
+        video.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
         return Prepared(asset: asset, video: video, audio: mix, duration: screenRange.duration, contentRect: content)
     }
 

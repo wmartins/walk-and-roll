@@ -30,7 +30,7 @@ To save frame diagnostics locally, set `WALK_AND_ROLL_TEST_ARTIFACTS` to an outp
 | `RecordingGeometryTests` | Aspect fit, edge clamping, crop placement, inverse preview hit testing |
 | `RecordingResolutionTests` | Native capture detail, output dimensions, even dimensions, 4K limit |
 | `RecordingImageSamplingTests` | Enlarged edge contrast, halo prevention, opaque boundaries, rotation |
-| `RecordingCompositionTests` | Preview/export parity, source shapes, frame styles, non-destructive editing |
+| `RecordingCompositionTests` | Source/preview/export color consistency, preview/export parity, source shapes, frame styles, non-destructive editing |
 | `RecordingOverlayTests` | Fixed camera/badges, click alignment, camera timing and corners |
 | `MP4ExportTests` | H.264/AAC output, audio mixing, cancellation/retry, destination/original protection |
 | `RecordingPreviewTests` | AVPlayer frames, seeking, edit rebuilds, playback/replay, camera fallback |
