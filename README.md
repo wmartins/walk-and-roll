@@ -20,6 +20,12 @@ Walk & Roll is a native macOS recorder for product demos and walkthroughs. Captu
 - Export 30 fps H.264 MP4 with mixed AAC audio when enabled, then keep editing and export again.
 - Preserve native capture dimensions up to 4K, or fit the recording into 1080p.
 
+## Download and install
+
+Download the **universal `.dmg`** from [GitHub Releases](https://github.com/wmartins/walk-and-roll/releases/latest). It runs on Apple silicon and Intel Macs with **macOS 15 or later**. Open the DMG, drag **Walk & Roll** to **Applications**, then open it from Applications.
+
+Releases are currently **not notarized by Apple** and have no verified Developer ID. macOS will normally block the first launch. If you trust this download, try opening the app, then choose **System Settings → Privacy & Security → Open Anyway** and confirm. See [Apple's instructions](https://support.apple.com/en-us/102445). Updates may require granting recording permissions again.
+
 ## Build and run
 
 Requires macOS 15 or later, Python 3.9 or later, and Xcode 16 or compatible Command Line Tools. A paid Apple Developer membership is optional for local builds.
@@ -51,6 +57,37 @@ open 'build/Xcode/Build/Products/Release/Walk & Roll.app'
 The project's default Xcode signing configuration is ad hoc. Use the commands above to retain the local signing identity across builds.
 
 </details>
+
+## Publishing a release
+
+The [Release workflow](.github/workflows/release.yml) runs the recording tests, builds an optimized universal app, verifies the finished DMG, and publishes it with installation instructions, generated release notes, and a SHA-256 checksum. It uses GitHub's built-in token; no repository secrets or Apple Developer account are needed.
+
+Set `CFBundleShortVersionString` in `WalkAndRoll/Info.plist` to the version you want to ship (for example `0.1.0`). Commit and push that change with the release changes, then create and push a matching tag on that commit:
+
+```sh
+git tag -a v0.1.0 -m 'Walk & Roll 0.1.0'
+git push origin v0.1.0
+```
+
+`Info.plist` is the source of the app's displayed version. Tags must use `vMAJOR.MINOR.PATCH` and match that version exactly; a mismatch stops the workflow before tests or compilation. The workflow run number sets the release copy's bundle build number (`CFBundleVersion`). For each later release, bump the plist version, commit it, and push a matching new tag. Ordinary branch pushes do not publish releases. Release assets have names such as `Walk-and-Roll-0.1.0-universal-unnotarized.dmg` and `SHA256SUMS`. Failed tests or packaging stop publication. An existing release is not overwritten by a rerun.
+
+To try the build without publishing, select **Actions → Release → Run workflow** and choose the branch to build. It reads the version from that branch's `Info.plist`. Download `release-assets` from the completed run; these test artifacts expire after 14 days. Published release assets remain available on the Releases page.
+
+To build the same DMG locally:
+
+```sh
+python3 scripts/package-release.py --build-number 3
+```
+
+The files are written to `build/release/`, using the version from `Info.plist`. The optional `--version` argument checks that an expected version matches the plist; it cannot override it. The script uses `build-local.py --release --universal`, retaining the private identity in `.local-signing/` for the local app. It ad-hoc signs a separate release copy, includes an Applications shortcut and license, and checks both architectures and the app signature inside the mounted DMG. Ad-hoc signing preserves bundle integrity but does not establish a verified developer identity.
+
+To verify a downloaded DMG, place it beside `SHA256SUMS` and run:
+
+```sh
+shasum -a 256 -c SHA256SUMS
+```
+
+Removing the first-launch exception requires an [Apple Developer Program membership and Developer ID signing](https://developer.apple.com/developer-id/), followed by [notarization](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution). That would be a separate upgrade to the release workflow; the local development certificate is not a substitute.
 
 ## Record
 

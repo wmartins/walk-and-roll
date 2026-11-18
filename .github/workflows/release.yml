@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate release version
+        id: version
+        run: |
+          python3 - <<'PY'
+          import os
+          import plistlib
+          import re
+          from pathlib import Path
+
+          with Path('WalkAndRoll/Info.plist').open('rb') as stream:
+              version = plistlib.load(stream).get('CFBundleShortVersionString')
+          if not isinstance(version, str) or not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', version):
+              raise SystemExit('Info.plist CFBundleShortVersionString must have the form MAJOR.MINOR.PATCH')
+          if os.environ['GITHUB_EVENT_NAME'] == 'push':
+              tag = os.environ['GITHUB_REF_NAME']
+              if tag != f'v{version}':
+                  raise SystemExit(f'Tag {tag!r} does not match Info.plist version {version!r}; expected v{version}')
+          with Path(os.environ['GITHUB_OUTPUT']).open('a') as output:
+              output.write(f'version={version}\n')
+          PY
+
+      - name: Run recording tests
+        run: python3 scripts/test-recording.py
+
+      - name: Build and verify universal DMG
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: python3 scripts/package-release.py --version "$VERSION" --build-number "$GITHUB_RUN_NUMBER" --sdk macosx
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: |
+            build/release/Walk-and-Roll-*-universal-unnotarized.dmg
+            build/release/SHA256SUMS
+            build/release/release-notes.md
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  publish:
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: release
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "release/Walk-and-Roll-${VERSION}-universal-unnotarized.dmg" \
+            release/SHA256SUMS \
+            --verify-tag \
+            --title "Walk & Roll ${VERSION}" \
+            --notes-file release/release-notes.md \
+            --generate-notes

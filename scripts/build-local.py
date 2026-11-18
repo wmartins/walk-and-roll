@@ -96,7 +96,7 @@ def signing_identity():
     return keychain, fingerprint, requirement
 
 
-def build_app(app, temporary, release, sdk_name):
+def build_app(app, temporary, release, sdk_name, universal=False):
     executable = app / "Contents" / "MacOS"
     resources = app / "Contents" / "Resources"
     for directory in [app, app / "Contents", executable, resources]:
@@ -110,13 +110,22 @@ def build_app(app, temporary, release, sdk_name):
     run(["/usr/bin/iconutil", "-c", "icns", iconset, "-o", resources / "AppIcon.icns"])
     sdk = run(["/usr/bin/xcrun", "--sdk", sdk_name, "--show-sdk-path"])
     print("Compiling Walk & Roll...", flush=True)
-    run([
-        "/usr/bin/xcrun", "--sdk", sdk_name, "swiftc", "-swift-version", "5",
-        "-target", f"{platform.machine()}-apple-macosx15.0", "-sdk", sdk,
-        "-module-cache-path", BUILD / "ModuleCache", "-module-name", "WalkAndRoll",
-        "-O" if release else "-Onone", *sorted((ROOT / "WalkAndRoll").glob("*.swift")),
-        "-o", executable / "WalkAndRoll",
-    ])
+    architectures = ["arm64", "x86_64"] if universal else [platform.machine()]
+    binaries = []
+    for architecture in architectures:
+        binary = temporary / f"WalkAndRoll-{architecture}"
+        run([
+            "/usr/bin/xcrun", "--sdk", sdk_name, "swiftc", "-swift-version", "5",
+            "-target", f"{architecture}-apple-macosx15.0", "-sdk", sdk,
+            "-module-cache-path", BUILD / "ModuleCache", "-module-name", "WalkAndRoll",
+            "-O" if release else "-Onone", *sorted((ROOT / "WalkAndRoll").glob("*.swift")),
+            "-o", binary,
+        ])
+        binaries.append(binary)
+    if universal:
+        run(["/usr/bin/lipo", "-create", *binaries, "-output", executable / "WalkAndRoll"])
+    else:
+        shutil.move(binaries[0], executable / "WalkAndRoll")
     (executable / "WalkAndRoll").chmod(0o755)
 
 
@@ -136,9 +145,12 @@ def publish(app, destination):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--release", action="store_true", help="Compile with optimization")
+    parser.add_argument("--universal", action="store_true", help="Build for Apple silicon and Intel Macs")
     parser.add_argument("--sdk", help="Override the macOS SDK selected for compilation")
     parser.add_argument("--sign-existing", type=Path, metavar="APP", help="Sign an existing Xcode build")
     options = parser.parse_args()
+    if options.sign_existing and options.universal:
+        parser.error("--universal cannot be used with --sign-existing")
     sdk_name = options.sdk
     if sdk_name is None:
         # Prefer the compatible 26.5 SDK when installed; newer SDKs can require additional SwiftUI compiler plugins.
@@ -159,7 +171,7 @@ def main():
             if options.sign_existing:
                 shutil.copytree(destination, app, symlinks=True)
             else:
-                build_app(app, Path(temporary), options.release, sdk_name)
+                build_app(app, Path(temporary), options.release, sdk_name, options.universal)
             with (app / "Contents" / "Info.plist").open("rb") as info:
                 if plistlib.load(info).get("CFBundleIdentifier") != IDENTIFIER:
                     raise RuntimeError("The selected app is not the Walk & Roll main target.")
