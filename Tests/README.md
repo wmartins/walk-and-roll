@@ -20,6 +20,10 @@ python3 scripts/test-recording.py list
 
 With a compatible active SDK/toolchain, the target also runs with `swift test --disable-xctest`.
 
+The release workflow uploads a `recording-test-failure` artifact when tests fail. It includes the test log and, for preview/export parity failures, the compared PNGs, synthetic source clips, exported MP4, requested and actual frame times, and measured RGB difference. The pixel tolerance remains the same on CI and locally. Run **Actions → Release → Run workflow** on a branch containing diagnostic changes to investigate without publishing a release. Rerunning an existing tag job uses the original tagged code.
+
+To save frame diagnostics locally, set `WALK_AND_ROLL_TEST_ARTIFACTS` to an output directory when running the tests.
+
 | Suite | Coverage |
 | --- | --- |
 | `RecordingEditsTests` | Easing, overlap resolution, equal-start precedence, invalid instructions |

@@ -22,10 +22,15 @@ struct RecordingCompositionTests {
         ) { _ in }
         // Before, during ease-in/hold/ease-out, at the overlapping start, and after the effects.
         for seconds in [0.0, 0.4, 0.8, 1.5, 1.7, 1.9, 2.3, 2.8] {
-            let preview = try await TestMedia.frame(prepared, at: seconds)
-            let encoded = try await TestMedia.frame(output, at: seconds)
+            let preview = try await TestMedia.sample(prepared, at: seconds)
+            let encoded = try await TestMedia.sample(output, at: seconds)
+            let difference = try TestMedia.meanDifference(preview.image, encoded.image)
             // Allow H.264 and color-conversion differences, not a different framing or timeline.
-            #expect(try TestMedia.meanDifference(preview, encoded) < 9, "Frame mismatch at \(seconds) seconds")
+            #expect(difference < 9, "Frame mismatch at \(seconds) seconds; preview time \(preview.actualTime.seconds), encoded time \(encoded.actualTime.seconds)")
+            if difference >= 9 {
+                try TestMedia.saveParityFailure(fixture: fixture, output: output, seconds: seconds,
+                    difference: difference, preview: preview, encoded: encoded)
+            }
         }
     }
 

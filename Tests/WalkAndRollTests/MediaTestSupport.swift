@@ -104,19 +104,53 @@ enum TestMedia {
     }
 
     static func frame(_ prepared: MP4Export.Prepared, at seconds: Double) async throws -> CGImage {
-        let generator = AVAssetImageGenerator(asset: prepared.asset)
-        generator.videoComposition = prepared.video
-        return try await frame(generator, at: seconds)
+        try await sample(prepared, at: seconds).image
     }
 
     static func frame(_ url: URL, at seconds: Double) async throws -> CGImage {
-        try await frame(AVAssetImageGenerator(asset: AVURLAsset(url: url)), at: seconds)
+        try await sample(url, at: seconds).image
     }
 
-    private static func frame(_ generator: AVAssetImageGenerator, at seconds: Double) async throws -> CGImage {
+    static func sample(_ prepared: MP4Export.Prepared, at seconds: Double) async throws -> (image: CGImage, actualTime: CMTime) {
+        let generator = AVAssetImageGenerator(asset: prepared.asset)
+        generator.videoComposition = prepared.video
+        return try await sample(generator, at: seconds)
+    }
+
+    static func sample(_ url: URL, at seconds: Double) async throws -> (image: CGImage, actualTime: CMTime) {
+        try await sample(AVAssetImageGenerator(asset: AVURLAsset(url: url)), at: seconds)
+    }
+
+    private static func sample(_ generator: AVAssetImageGenerator, at seconds: Double) async throws -> (image: CGImage, actualTime: CMTime) {
         generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = .zero
-        return try await generator.image(at: CMTime(seconds: seconds, preferredTimescale: 600)).image
+        return try await generator.image(at: CMTime(seconds: seconds, preferredTimescale: 600))
+    }
+
+    static func saveParityFailure(
+        fixture: MediaFixture, output: URL, seconds: Double, difference: Double,
+        preview: (image: CGImage, actualTime: CMTime), encoded: (image: CGImage, actualTime: CMTime)
+    ) throws {
+        guard let path = ProcessInfo.processInfo.environment["WALK_AND_ROLL_TEST_ARTIFACTS"] else { return }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+            .appendingPathComponent("preview-export-\(seconds)-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        for (name, image) in [("preview", preview.image), ("encoded", encoded.image)] {
+            let png = try #require(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+            try png.write(to: directory.appendingPathComponent("\(name).png"))
+        }
+        for (name, source) in [("screen.mp4", fixture.screen), ("camera.mp4", fixture.camera), ("export.mp4", output)] {
+            try FileManager.default.copyItem(at: source, to: directory.appendingPathComponent(name))
+        }
+        let details = """
+        OS: \(ProcessInfo.processInfo.operatingSystemVersionString)
+        Requested time: \(seconds)
+        Preview actual time: \(preview.actualTime.seconds)
+        Encoded actual time: \(encoded.actualTime.seconds)
+        Mean RGB difference: \(difference) (required: < 9)
+        """
+        try details.write(to: directory.appendingPathComponent("comparison.txt"), atomically: true, encoding: .utf8)
+        print("Saved frame comparison diagnostics to \(directory.path)")
     }
 
     static func render(_ image: CIImage, in bounds: CGRect) throws -> CGImage {
