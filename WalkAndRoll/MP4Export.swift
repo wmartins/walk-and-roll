@@ -12,13 +12,26 @@ enum RecordingResolution: String, CaseIterable, Identifiable {
         RecordingResolution.sharper.outputSize(for: sourceSize)
     }
 
-    func outputSize(for sourceSize: CGSize, blurredBackdrop: Bool = false) -> CGSize {
-        if blurredBackdrop {
-            if self == .fullHD { return CGSize(width: 1920, height: 1080) }
-            let height = min(2160, max(sourceSize.height, sourceSize.width * 9 / 16))
-            return CGSize(width: max(2, (height * 16 / 9 / 2).rounded() * 2),
-                          height: max(2, (height / 2).rounded() * 2))
+    /// Even codec dimensions with the same inset on all four sides.
+    func layout(for source: CGSize, frameStyle: RecordingFrameStyle) -> (canvas: CGSize, content: CGRect) {
+        guard frameStyle == .windowFrame else {
+            let canvas = outputSize(for: source)
+            return (canvas, RecordingGeometry.fittedRect(source: source, canvas: canvas))
         }
+        let padding = max(2, (min(source.width, source.height) * 0.06 / 2).rounded() * 2)
+        let raw = CGSize(width: source.width + 2 * padding, height: source.height + 2 * padding)
+        let limit = self == .sharper ? CGSize(width: 3840, height: 2160) : CGSize(width: 1920, height: 1080)
+        let fit = min(limit.width / raw.width, limit.height / raw.height)
+        let scale = self == .sharper ? min(1, fit) : fit
+        let inset = max(2, floor(padding * scale / 2) * 2)
+        let contentScale = min(scale, (limit.width - 2 * inset) / source.width, (limit.height - 2 * inset) / source.height)
+        let inner = CGSize(width: max(2, floor(source.width * contentScale / 2) * 2),
+                           height: max(2, floor(source.height * contentScale / 2) * 2))
+        return (CGSize(width: inner.width + 2 * inset, height: inner.height + 2 * inset),
+                CGRect(x: inset, y: inset, width: inner.width, height: inner.height))
+    }
+
+    func outputSize(for sourceSize: CGSize) -> CGSize {
         let fit1080p = min(1920 / sourceSize.width, 1080 / sourceSize.height)
         // Preserve available detail without enlarging small sources in Sharper mode.
         let scale = self == .sharper ? min(1, 2 * fit1080p) : fit1080p
@@ -123,8 +136,9 @@ enum MP4Export {
         guard screenBounds.width > 0, screenBounds.height > 0, screenRange.duration > .zero else {
             throw ExportError.noVideo
         }
-        let frameSize = resolution.outputSize(for: screenBounds.size, blurredBackdrop: edits.blurredBackdrop)
-        let content = RecordingGeometry.fittedRect(source: screenBounds.size, canvas: frameSize)
+        let layout = resolution.layout(for: screenBounds.size, frameStyle: edits.frameStyle)
+        let frameSize = layout.canvas
+        let content = layout.content
         let outputRange = CMTimeRange(start: .zero, duration: screenRange.duration)
         let asset = AVMutableComposition()
         let screenLayer = try addTrack(.video, to: asset)
@@ -164,7 +178,9 @@ enum MP4Export {
             try cameraLayer.insertTimeRange(cameraTrim, of: camera, at: cameraRange.start)
             let cameraImage = RecordingCompositionInstruction.imageTransform(size: cameraSize, preferred: preferred)
             let cameraBounds = CGRect(origin: .zero, size: cameraSize).applying(cameraImage)
-            let bubble = overlay.corner.frame(in: frameSize)
+            let bubble = edits.frameStyle == .windowFrame
+                ? overlay.corner.frame(in: content.size).offsetBy(dx: content.minX, dy: content.minY)
+                : overlay.corner.frame(in: frameSize)
             let scale = max(bubble.width / cameraBounds.width, bubble.height / cameraBounds.height)
             cameraEffect = CameraLayer(
                 track: cameraLayer, timeRange: cameraRange,

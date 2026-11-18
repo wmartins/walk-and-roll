@@ -5,37 +5,43 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct RecordingOverlayTests {
-    @Test("Camera and keystroke badges stay fixed while the screen zooms")
-    func fixedOutputOverlays() async throws {
+    @Test("Camera and keystroke badges stay fixed while the screen zooms", arguments: [RecordingFrameStyle.plain, .windowFrame])
+    func fixedOutputOverlays(style: RecordingFrameStyle) async throws {
         let fixture = try await MediaFixture()
         defer { fixture.remove() }
+        var edits = fixture.edits
+        edits.frameStyle = style
         let still = try await MP4Export.prepare(fixture.screen, camera: fixture.overlay,
-                                                keystrokes: fixture.keystrokes, resolution: .sharper)
+                                                keystrokes: fixture.keystrokes, resolution: .sharper, edits: RecordingEdits(frameStyle: style))
         let zoomed = try await MP4Export.prepare(fixture.screen, camera: fixture.overlay,
-            keystrokes: fixture.keystrokes, resolution: .sharper, edits: fixture.edits)
+            keystrokes: fixture.keystrokes, resolution: .sharper, edits: edits)
         let base = try await TestMedia.frame(still, at: 0.8)
         let changed = try await TestMedia.frame(zoomed, at: 0.8)
-        let bubble = fixture.overlay.corner.frame(in: fixture.size)
+        let overlayBounds = style == .windowFrame ? still.contentRect : CGRect(origin: .zero, size: still.video.renderSize)
+        let bubble = fixture.overlay.corner.frame(in: overlayBounds.size).offsetBy(dx: overlayBounds.minX, dy: overlayBounds.minY)
         #expect(try TestMedia.meanDifference(base, changed, region: bubble.insetBy(dx: 10, dy: 10)) < 0.1)
         let badge = try #require(RecordingCompositionInstruction.makeBadge(
-            fixture.keystrokes[0].label, canvas: fixture.size, avoiding: bubble
-        ))
+            fixture.keystrokes[0].label, canvas: overlayBounds.size,
+            avoiding: bubble.offsetBy(dx: -overlayBounds.minX, dy: -overlayBounds.minY)
+        )).transformed(by: CGAffineTransform(translationX: overlayBounds.minX, y: overlayBounds.minY))
         // Its translucent background picks up some screen differences; a moved badge differs much more.
         #expect(try TestMedia.meanDifference(base, changed, region: badge.extent.insetBy(dx: 2, dy: 2)) < 12)
     }
 
-    @Test("Click rings stay centered on the zoomed screen target")
-    func clickContentAlignment() async throws {
+    @Test("Click rings stay centered on the zoomed screen target", arguments: [RecordingFrameStyle.plain, .windowFrame])
+    func clickContentAlignment(style: RecordingFrameStyle) async throws {
         let fixture = try await MediaFixture()
         defer { fixture.remove() }
-        let base = try await MP4Export.prepare(fixture.screen, resolution: .sharper, edits: fixture.edits)
+        var edits = fixture.edits
+        edits.frameStyle = style
+        let base = try await MP4Export.prepare(fixture.screen, resolution: .sharper, edits: edits)
         let withClick = try await MP4Export.prepare(fixture.screen, clicks: fixture.clicks,
-                                                    resolution: .sharper, edits: fixture.edits)
+                                                    resolution: .sharper, edits: edits)
         let noRing = try await TestMedia.frame(base, at: 0.8)
         let ring = try await TestMedia.frame(withClick, at: 0.8)
         let instruction = try #require(withClick.video.instructions.first as? RecordingCompositionInstruction)
         let target = CGPoint(x: 0.75 * 640, y: 0.7 * 360).applying(instruction.screenTransform)
-            .applying(RecordingGeometry.zoomTransform(in: withClick.contentRect, zoom: fixture.edits.zoom(at: 0.8), at: 0.8))
+            .applying(RecordingGeometry.zoomTransform(in: withClick.contentRect, zoom: edits.zoom(at: 0.8), at: 0.8, frameStyle: style))
         let before = try TestMedia.pixels(noRing), after = try TestMedia.pixels(ring)
         var sumX = 0.0, sumY = 0.0, count = 0.0
         for row in 0..<ring.height {

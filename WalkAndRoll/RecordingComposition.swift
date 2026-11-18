@@ -37,6 +37,7 @@ final class RecordingCompositionInstruction: NSObject, AVVideoCompositionInstruc
     let screenSize: CGSize
     let contentRect: CGRect
     let edits: RecordingEdits
+    let windowFrame: WindowFrameRendering?
     let camera: CameraLayer?
     let clicks: [ClickHighlight]
     let keystrokes: [KeystrokeBadge]
@@ -52,7 +53,11 @@ final class RecordingCompositionInstruction: NSObject, AVVideoCompositionInstruc
         self.screenSize = screenSize
         self.screenTransform = screenTransform
         self.contentRect = contentRect
-        self.edits = RecordingEdits(zooms: edits.resolvedZooms, blurredBackdrop: edits.blurredBackdrop)
+        var snapshot = edits.renderingEdits
+        snapshot.zooms = snapshot.resolvedZooms
+        self.edits = snapshot
+        windowFrame = edits.frameStyle == .windowFrame
+            ? WindowFrameRendering(content: contentRect) : nil
         self.camera = camera
         self.clicks = clicks.sorted { $0.seconds < $1.seconds }
         self.keystrokes = keystrokes.sorted { $0.seconds < $1.seconds }
@@ -109,6 +114,51 @@ final class RecordingCompositionInstruction: NSObject, AVVideoCompositionInstruc
         return bitmap.makeImage().map {
             CIImage(cgImage: $0).transformed(by: CGAffineTransform(translationX: x.rounded(), y: y.rounded()))
         }
+    }
+}
+
+/// Immutable masks and shadow are shared by every frame in a composition.
+/// Clip flattened black capture corners without adding a stroke or changing pixels.
+struct WindowFrameRendering {
+    let mask: CIImage
+    let background: CIImage
+
+    init(content: CGRect) {
+        let bounds = CGRect(x: 0, y: 0, width: content.maxX + content.minX, height: content.maxY + content.minY)
+        let edge = min(content.width, content.height)
+        mask = Self.roundedMask(content, radius: RecordingGeometry.cornerRadius(in: content, frameStyle: .windowFrame)).cropped(to: bounds)
+        var backdrop = CIImage(color: CIColor(red: 0.92, green: 0.93, blue: 0.95)).cropped(to: bounds)
+        for (opacity, sigma, offset) in [(0.18, edge * 0.017, -edge * 0.005), (0.10, edge * 0.004, -edge * 0.002)] {
+            let color = CIFilter.colorMatrix()
+            color.inputImage = mask
+            color.rVector = CIVector(x: 0, y: 0, z: 0, w: 0)
+            color.gVector = color.rVector
+            color.bVector = color.rVector
+            color.aVector = CIVector(x: 0, y: 0, z: 0, w: opacity)
+            let shadow = (color.outputImage ?? mask).applyingGaussianBlur(sigma: sigma)
+                .transformed(by: CGAffineTransform(translationX: 0, y: offset)).cropped(to: bounds)
+            backdrop = shadow.composited(over: backdrop)
+        }
+        background = backdrop
+    }
+
+    func composite(_ image: CIImage) -> CIImage {
+        Self.blend(image, over: background, mask: mask)
+    }
+
+    private static func roundedMask(_ rect: CGRect, radius: CGFloat) -> CIImage {
+        let shape = CIFilter.roundedRectangleGenerator()
+        shape.extent = rect
+        shape.radius = Float(radius)
+        return shape.outputImage ?? .empty()
+    }
+
+    private static func blend(_ image: CIImage, over background: CIImage, mask: CIImage) -> CIImage {
+        let blend = CIFilter.blendWithMask()
+        blend.inputImage = image
+        blend.backgroundImage = background
+        blend.maskImage = mask
+        return blend.outputImage ?? image
     }
 }
 
@@ -174,11 +224,13 @@ final class RecordingCompositor: NSObject, AVVideoCompositing {
         let content = instruction.contentRect
         let original = CIImage(cvPixelBuffer: screen)
         let zoom = instruction.edits.zoom(at: seconds)
-        let zoomTransform = RecordingGeometry.zoomTransform(in: content, zoom: zoom, at: seconds)
+        let zoomTransform = RecordingGeometry.zoomTransform(in: content, zoom: zoom, at: seconds, frameStyle: instruction.edits.frameStyle)
         // Combine framing and zoom before resampling, so a 1080p edit can use
         // every available original pixel rather than enlarging a reduced intermediate.
-        var image = RecordingImageSampling.transform(original, by: instruction.screenTransform.concatenating(zoomTransform))
-            .cropped(to: content)
+        let sampled = RecordingImageSampling.transform(original, by: instruction.screenTransform.concatenating(zoomTransform))
+        // Even output dimensions can leave a fractional pixel at an edge. Extend
+        // that edge's own color instead of exposing a dark seam behind the mask.
+        var image = (instruction.windowFrame == nil ? sampled : sampled.clampedToExtent()).cropped(to: content)
         for click in activeClicks(instruction.clicks, at: seconds) {
             let point = CGPoint(
                 x: click.position.x * instruction.screenSize.width,
@@ -189,18 +241,8 @@ final class RecordingCompositor: NSObject, AVVideoCompositing {
             }
         }
 
-        var background = CIImage(color: CIColor(red: 0, green: 0, blue: 0)).cropped(to: bounds)
-        if instruction.edits.blurredBackdrop {
-            let scale = max(bounds.width / content.width, bounds.height / content.height)
-            let foreground = RecordingImageSampling.transform(original, by: instruction.screenTransform).cropped(to: content)
-            let fill = foreground.transformed(by: CGAffineTransform(translationX: -content.midX, y: -content.midY)
-                .concatenating(CGAffineTransform(scaleX: scale, y: scale))
-                .concatenating(CGAffineTransform(translationX: bounds.midX, y: bounds.midY)))
-            background = fill.clampedToExtent()
-                .applyingGaussianBlur(sigma: min(bounds.width, bounds.height) * 0.025)
-                .cropped(to: bounds)
-        }
-        image = image.composited(over: background)
+        let background = CIImage(color: CIColor(red: 0, green: 0, blue: 0)).cropped(to: bounds)
+        image = instruction.windowFrame?.composite(image) ?? image.composited(over: background)
 
         if let layer = instruction.camera,
            layer.timeRange.containsTime(request.compositionTime),
@@ -215,12 +257,14 @@ final class RecordingCompositor: NSObject, AVVideoCompositing {
             image = blend.outputImage ?? image
         }
 
+        let overlayBounds = instruction.windowFrame == nil ? bounds : content
+        let badgeCamera = instruction.camera?.mask.extent.offsetBy(dx: -overlayBounds.minX, dy: -overlayBounds.minY)
         if let keystroke = activeKeystroke(instruction.keystrokes, at: seconds, delay: instruction.keystrokeDelay),
-           let badge = badge(for: keystroke.label, canvas: bounds.size, avoiding: instruction.camera?.mask.extent) {
+           let badge = badge(for: keystroke.label, canvas: overlayBounds.size, avoiding: badgeCamera) {
             let age = seconds - keystroke.seconds
             let opacity = min(1, (instruction.keystrokeDelay + KeystrokeBadge.fadeDuration - age) / KeystrokeBadge.fadeDuration)
             let fade = CIFilter.colorMatrix()
-            fade.inputImage = badge
+            fade.inputImage = badge.transformed(by: CGAffineTransform(translationX: overlayBounds.minX, y: overlayBounds.minY))
             fade.aVector = CIVector(x: 0, y: 0, z: 0, w: opacity)
             image = (fade.outputImage ?? badge).composited(over: image)
         }

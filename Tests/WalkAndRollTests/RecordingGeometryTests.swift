@@ -55,3 +55,28 @@ struct RecordingGeometryTests {
                                               canvas: canvas, zoom: zoom, seconds: 1) == nil)
     }
 }
+
+extension RecordingGeometryTests {
+    @Test("Rounded-frame edge zooms use the same crop for rendering and focal-point hit testing")
+    func framedInverseHitTesting() throws {
+        let layout = RecordingResolution.sharper.layout(for: CGSize(width: 1800, height: 1264), frameStyle: .windowFrame)
+        let content = layout.content
+        for focal in [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 0), CGPoint(x: 0, y: 1), CGPoint(x: 1, y: 1)] {
+            let zoom = ZoomEffect(start: 0, duration: 2, magnification: 4, focalPoint: focal)
+            let crop = RecordingGeometry.crop(in: content, zoom: zoom, at: 1, frameStyle: .windowFrame)
+            #expect(crop.minX > content.minX && crop.maxX < content.maxX)
+            #expect(crop.minY > content.minY && crop.maxY < content.maxY)
+            let source = try #require(RecordingGeometry.sourcePoint(at: CGPoint(x: 0.5, y: 0.5),
+                content: content, canvas: layout.canvas, zoom: zoom, seconds: 1, frameStyle: .windowFrame))
+            let point = CGPoint(x: content.minX + source.x * content.width,
+                                y: content.minY + (1 - source.y) * content.height)
+                .applying(RecordingGeometry.zoomTransform(in: content, zoom: zoom, at: 1, frameStyle: .windowFrame))
+            #expect(abs(point.x - layout.canvas.width / 2) < 0.00001)
+            #expect(abs(point.y - layout.canvas.height / 2) < 0.00001)
+        }
+        #expect(RecordingGeometry.sourcePoint(at: CGPoint(x: content.minX / layout.canvas.width,
+            y: (layout.canvas.height - content.maxY) / layout.canvas.height), content: content,
+            canvas: layout.canvas, zoom: nil, seconds: 0, frameStyle: .windowFrame) == nil,
+            "Rounded-off corners are background, not footage")
+    }
+}

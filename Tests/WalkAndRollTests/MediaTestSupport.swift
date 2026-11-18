@@ -59,7 +59,7 @@ enum TestMedia {
         }
     }
 
-    static func makeVideo(at url: URL, size: CGSize, camera: Bool = false, frames: Int = 90) async throws {
+    static func makeVideo(at url: URL, size: CGSize, camera: Bool = false, frames: Int = 90, imageOverride: CIImage? = nil) async throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: Int(size.width), AVVideoHeightKey: Int(size.height)
@@ -92,7 +92,7 @@ enum TestMedia {
             let target = CGRect(x: size.width * 0.75 - 4, y: size.height * 0.7 - 4, width: 8, height: 8)
             image = CIImage(color: CIColor(red: 1, green: 1, blue: 1)).cropped(to: target).composited(over: image)
         }
-        context.render(image, to: pixelBuffer)
+        context.render(imageOverride ?? image, to: pixelBuffer)
         for frame in 0..<frames {
             try await waitUntil { input.isReadyForMoreMediaData || writer.status == .failed }
             try #require(writer.status == .writing)

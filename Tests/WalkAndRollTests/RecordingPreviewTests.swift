@@ -48,9 +48,9 @@ struct RecordingPreviewTests {
         try await seek(preview, to: 1.5)
         try await TestMedia.waitUntil { output.hasNewPixelBuffer(forItemTime: time) }
         let buffer = try #require(output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil))
-        let actual = try TestMedia.render(CIImage(cvPixelBuffer: buffer), in: CGRect(origin: .zero, size: fixture.size))
+        let actual = try TestMedia.render(CIImage(cvPixelBuffer: buffer), in: CGRect(origin: .zero, size: preview.canvas))
         let prepared = try await MP4Export.prepare(fixture.screen, camera: fixture.overlay,
-            clicks: fixture.clicks, keystrokes: fixture.keystrokes, resolution: .sharper)
+            clicks: fixture.clicks, keystrokes: fixture.keystrokes, resolution: .sharper, edits: preview.edits)
         let expected = try await TestMedia.frame(prepared, at: 1.5)
         #expect(try TestMedia.meanDifference(actual, expected) < 2)
     }
@@ -64,7 +64,9 @@ struct RecordingPreviewTests {
         try await ready(preview)
         try await seek(preview, to: 1)
         preview.addingZoom = true
-        preview.addZoom(at: CGPoint(x: 0.9, y: 0.1))
+        let content = preview.contentRect
+        preview.addZoom(at: CGPoint(x: (content.minX + 0.9 * content.width) / preview.canvas.width,
+                                   y: (preview.canvas.height - content.maxY + 0.1 * content.height) / preview.canvas.height))
         try #require(preview.edits.zooms.count == 1)
         let zoom = try #require(preview.selectedZoom)
         #expect(zoom.start == 1)
@@ -90,7 +92,7 @@ struct RecordingPreviewTests {
         defer { preview.close() }
         try await ready(preview)
         try await seek(preview, to: 1.5)
-        preview.edits.blurredBackdrop = true
+        preview.edits.frameStyle = .plain
         preview.resolution = .fullHD
         preview.includesCamera = false
         try await ready(preview)
@@ -98,7 +100,7 @@ struct RecordingPreviewTests {
         #expect(abs(preview.time - 1.5) < 0.02)
         let instruction = try #require(preview.player.currentItem?.videoComposition?.instructions.first as? RecordingCompositionInstruction)
         #expect(instruction.camera == nil)
-        #expect(instruction.edits.blurredBackdrop)
+        #expect(instruction.edits.frameStyle == .plain)
     }
 
     @Test("Playback advances, pauses at the end, and restarts from the beginning")
@@ -137,5 +139,71 @@ struct RecordingPreviewTests {
         try await ready(preview)
         #expect(preview.error == nil)
         #expect(try Data(contentsOf: fixture.screen) == original)
+    }
+}
+
+extension RecordingPreviewTests {
+    @Test("Naming a zoom preserves playback and its name survives further edits")
+    func zoomNamesDoNotInterruptPlayback() async throws {
+        let fixture = try await MediaFixture()
+        defer { fixture.remove() }
+        let preview = fixture.preview()
+        defer { preview.close() }
+        try await ready(preview)
+        try await seek(preview, to: 0.5)
+        preview.addingZoom = true
+        preview.addZoom(at: CGPoint(x: 0.5, y: 0.5))
+        try await ready(preview)
+        let id = try #require(preview.selectedZoomID)
+        let item = try #require(preview.player.currentItem)
+        preview.togglePlayback()
+        preview.renameSelected("Open Settings")
+        #expect(preview.selectedZoom?.name == "Open Settings")
+        #expect(preview.player.currentItem === item)
+        #expect(!preview.isPreparing)
+        #expect(preview.isPlaying)
+        #expect(preview.player.rate != 0)
+        preview.pause()
+        preview.updateSelected(duration: 0.8, magnification: 2.5)
+        try await ready(preview)
+        #expect(preview.selectedZoomID == id)
+        #expect(preview.selectedZoom?.name == "Open Settings")
+        #expect(preview.edits.resolvedZooms.first?.name == "Open Settings")
+        #expect(preview.edits.renderingEdits.zooms.first?.name == "")
+        preview.renameSelected("")
+        #expect(preview.selectedZoom?.name == "")
+        #expect(preview.player.currentItem != nil)
+        #expect(!preview.isPreparing)
+    }
+}
+
+extension RecordingPreviewTests {
+    @Test("Window Frame is the editor default and changing frames preserves named zooms and playhead")
+    func frameSwitching() async throws {
+        let fixture = try await MediaFixture()
+        defer { fixture.remove() }
+        let preview = fixture.preview()
+        defer { preview.close() }
+        try await ready(preview)
+        #expect(preview.edits.frameStyle == .windowFrame)
+        let frameCanvas = preview.canvas
+        preview.addingZoom = true
+        preview.addZoom(at: CGPoint(x: 0, y: 0.5))
+        #expect(preview.edits.zooms.isEmpty, "Margin clicks cannot add a focal point")
+        preview.addZoom(at: CGPoint(x: 0.5, y: 0.5))
+        preview.renameSelected("Inspect controls")
+        try await ready(preview)
+        try await seek(preview, to: 1.5)
+        let zoom = try #require(preview.selectedZoom)
+        for style in [RecordingFrameStyle.plain, .windowFrame] {
+            preview.edits.frameStyle = style
+            try await ready(preview)
+            #expect(abs(preview.time - 1.5) < 0.02)
+            #expect(preview.selectedZoom == zoom)
+            let instruction = try #require(preview.player.currentItem?.videoComposition?.instructions.first as? RecordingCompositionInstruction)
+            #expect(instruction.edits.frameStyle == style)
+            #expect((instruction.windowFrame != nil) == (style == .windowFrame))
+        }
+        #expect(preview.canvas == frameCanvas)
     }
 }

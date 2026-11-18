@@ -26,7 +26,11 @@ final class RecordingPreview {
     private(set) var error: String?
     private(set) var canvas = CGSize(width: 16, height: 9)
     private(set) var contentRect = CGRect.zero
-    var edits = RecordingEdits() { didSet { rebuild() } }
+    var edits = RecordingEdits(frameStyle: .windowFrame) {
+        didSet {
+            if edits.renderingEdits != oldValue.renderingEdits { rebuild() }
+        }
+    }
     var resolution: RecordingResolution { didSet { rebuild() } }
     var includesCamera = true { didSet { rebuild() } }
     var selectedZoomID: UUID?
@@ -48,8 +52,10 @@ final class RecordingPreview {
         duration = 11.1
         time = 1
         isPreparing = designScenario == "preparing"
-        canvas = designScenario == "portrait" ? CGSize(width: 720, height: 1080) : CGSize(width: 1800, height: 1264)
-        contentRect = CGRect(origin: .zero, size: canvas)
+        let sourceSize = designScenario == "portrait" ? CGSize(width: 720, height: 1080) : CGSize(width: 1800, height: 1264)
+        let layout = resolution.layout(for: sourceSize, frameStyle: edits.frameStyle)
+        canvas = layout.canvas
+        contentRect = layout.content
         if ["zooms", "adding", "overlap"].contains(designScenario) {
             edits.zooms = [
                 ZoomEffect(start: 1, duration: 3, focalPoint: CGPoint(x: 0.25, y: 0.3)),
@@ -169,7 +175,7 @@ final class RecordingPreview {
     func addZoom(at point: CGPoint) {
         guard addingZoom, !isPreparing, error == nil,
               let focal = RecordingGeometry.sourcePoint(at: point, content: contentRect, canvas: canvas,
-                                                       zoom: edits.zoom(at: time), seconds: time),
+                                                       zoom: edits.zoom(at: time), seconds: time, frameStyle: edits.frameStyle),
               duration - time >= 1 / 30 else { return }
         player.pause()
         isPlaying = false
@@ -200,6 +206,11 @@ final class RecordingPreview {
         selectedZoomID = nil
     }
 
+    func renameSelected(_ name: String) {
+        guard let index = edits.zooms.firstIndex(where: { $0.id == selectedZoomID }) else { return }
+        edits.zooms[index].name = name
+    }
+
     func close() {
         buildTask?.cancel()
         buildTask = nil
@@ -218,6 +229,7 @@ struct RecordingPreviewView: View {
     var inputMessage: String? = nil
     var capturedKeystrokeCount: Int? = nil
     @State private var zoomHelpExpanded = false
+    @FocusState private var editingZoomName: Bool
 
     private var canPlaceZoom: Bool {
         !preview.isPreparing && preview.error == nil && preview.duration - preview.time >= 1 / 30
@@ -251,7 +263,11 @@ struct RecordingPreviewView: View {
             }
         }
         .background(Color(nsColor: .windowBackgroundColor))
-        .onExitCommand { cancelPlacement() }
+        .onExitCommand {
+            if editingZoomName { editingZoomName = false }
+            else { cancelPlacement() }
+        }
+        .onChange(of: preview.selectedZoomID) { _, _ in editingZoomName = false }
     }
 
     private var playbackArea: some View {
@@ -270,7 +286,7 @@ struct RecordingPreviewView: View {
         GeometryReader { geometry in
             let fit = RecordingGeometry.fittedRect(source: preview.canvas, canvas: geometry.size)
             ZStack {
-                Color.black
+                Color(nsColor: .underPageBackgroundColor)
                 previewImage
                     .frame(width: fit.width, height: fit.height)
                     .overlay {
@@ -370,7 +386,7 @@ struct RecordingPreviewView: View {
                 Image(systemName: preview.isPlaying ? "pause.fill" : "play.fill")
                     .frame(width: 20, height: 20)
             }
-            .keyboardShortcut(.space, modifiers: [])
+            .keyboardShortcut(editingZoomName ? nil : KeyboardShortcut(.space, modifiers: []))
             .accessibilityLabel(preview.isPlaying ? "Pause preview" : "Play preview")
             .help("Play or pause (Space)")
             Slider(value: Binding(get: { preview.time }, set: { preview.seek(to: $0) }),
@@ -460,10 +476,12 @@ struct RecordingPreviewView: View {
 
     private func zoomRow(_ zoom: ZoomEffect, number: Int) -> some View {
         let selected = preview.selectedZoomID == zoom.id
+        let title = zoomTitle(zoom, number: number)
         return Button { preview.selectZoom(zoom.id) } label: {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Zoom \(number)").fontWeight(selected ? .semibold : .regular)
+                    Text(title).fontWeight(selected ? .semibold : .regular)
+                        .lineLimit(1).truncationMode(.tail).help(title)
                     Text("\(timestamp(zoom.start)) · \(decimal(zoom.duration)) s")
                         .font(.callout).foregroundStyle(.secondary).monospacedDigit()
                 }
@@ -485,7 +503,7 @@ struct RecordingPreviewView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Zoom \(number), starts at \(decimal(zoom.start)) seconds, duration \(decimal(zoom.duration)) seconds, \(decimal(zoom.magnification)) times magnification")
+        .accessibilityLabel("\(title), starts at \(decimal(zoom.start)) seconds, duration \(decimal(zoom.duration)) seconds, \(decimal(zoom.magnification)) times magnification")
         .accessibilityValue(selected ? "Selected" : "Not selected")
         .help("Select and seek to this zoom")
     }
@@ -499,6 +517,17 @@ struct RecordingPreviewView: View {
                 Button("Remove", role: .destructive) { preview.removeSelected() }
                     .buttonStyle(.borderless)
                     .accessibilityLabel("Remove selected zoom")
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Name").font(.callout).foregroundStyle(.secondary)
+                TextField("Zoom name", text: Binding(
+                    get: { preview.selectedZoom?.name ?? "" },
+                    set: { preview.renameSelected($0) }
+                ), prompt: Text("Zoom \((orderedZooms.firstIndex { $0.id == zoom.id } ?? 0) + 1)"))
+                .textFieldStyle(.roundedBorder)
+                .focused($editingZoomName)
+                .onSubmit { editingZoomName = false }
+                .accessibilityLabel("Zoom name")
             }
             VStack(spacing: 6) {
                 valueLabel("Duration", value: "\(decimal(zoom.duration)) s")
@@ -523,7 +552,14 @@ struct RecordingPreviewView: View {
 
     private var appearanceSection: some View {
         inspectorSection("Appearance") {
-            inspectorToggle("Blurred backdrop", detail: "Fill a 16:9 frame behind your video.", isOn: $preview.edits.blurredBackdrop)
+            Text("Frame").font(.callout).foregroundStyle(.secondary)
+            Picker("Video frame", selection: $preview.edits.frameStyle) {
+                ForEach(RecordingFrameStyle.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .labelsHidden().pickerStyle(.menu)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Text(preview.edits.frameStyle.explanation)
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if preview.hasCamera {
                 Divider().padding(.vertical, 4)
                 inspectorToggle("Recorded camera", detail: "Include the recorded camera bubble.", isOn: $preview.includesCamera)
@@ -584,6 +620,11 @@ struct RecordingPreviewView: View {
     private func cancelPlacement() {
         preview.addingZoom = false
         NSCursor.arrow.set()
+    }
+
+    private func zoomTitle(_ zoom: ZoomEffect, number: Int) -> String {
+        let name = zoom.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? "Zoom \(number)" : name
     }
 
     private func decimal(_ value: Double) -> String {
