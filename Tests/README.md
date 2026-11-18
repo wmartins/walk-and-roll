@@ -24,6 +24,14 @@ The release workflow uploads a `recording-test-failure` artifact when tests fail
 
 To save frame diagnostics locally, set `WALK_AND_ROLL_TEST_ARTIFACTS` to an output directory when running the tests.
 
+The release workflow also checks signing with a disposable keychain and a small app fixture:
+
+```sh
+python3 Tests/test_local_signing.py
+```
+
+This checks that a fresh identity remains searchable during signing, is reused on a second build, and restores the original keychain search list after both success and failure. It leaves `.local-signing/` untouched and deletes only its temporary test keychain.
+
 | Suite | Coverage |
 | --- | --- |
 | `RecordingEditsTests` | Easing, overlap resolution, equal-start precedence, invalid instructions |

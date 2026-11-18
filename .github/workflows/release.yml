@@ -66,6 +66,9 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Verify signing keychain lifecycle
+        run: python3 Tests/test_local_signing.py
+
       - name: Build and verify universal DMG
         env:
           VERSION: ${{ steps.version.outputs.version }}

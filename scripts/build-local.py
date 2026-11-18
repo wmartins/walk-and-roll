@@ -2,6 +2,7 @@
 """Build Walk & Roll with a persistent, certificate-bound local signing identity."""
 
 import argparse
+from contextlib import contextmanager
 import ctypes
 import fcntl
 import hashlib
@@ -31,6 +32,7 @@ def run(arguments):
     return result.stdout.strip()
 
 
+@contextmanager
 def signing_identity():
     certificate = SIGNING / "certificate.pem"
     private_key = SIGNING / "private-key.pem"
@@ -65,6 +67,13 @@ def signing_identity():
             run(["/usr/bin/security", "create-keychain", "-p", password, keychain])
             run(["/usr/bin/security", "set-keychain-settings", "-lut", "21600", keychain])
         run(["/usr/bin/security", "unlock-keychain", "-p", password, keychain])
+        # codesign can still use the user's search list to resolve the private
+        # key even with --keychain. Keep this identity searchable until signing
+        # and verification finish, including on fresh macOS CI runners.
+        search_list = original_search_list.copy()
+        if str(keychain) not in search_list:
+            search_list.append(str(keychain))
+        run(["/usr/bin/security", "list-keychains", "-d", "user", "-s", *search_list])
 
         certificate_der = subprocess.run(
             ["/usr/bin/openssl", "x509", "-in", str(certificate), "-outform", "DER"],
@@ -87,13 +96,15 @@ def signing_identity():
             "/usr/bin/security", "set-key-partition-list", "-S", "apple-tool:,apple:",
             "-s", "-k", password, keychain,
         ])
+        identities = run(["/usr/bin/security", "find-identity", "-p", "codesigning", keychain])
+        if fingerprint not in identities:
+            raise RuntimeError("The local signing certificate and private key were not found in their keychain.")
+        requirement = f'designated => identifier "{IDENTIFIER}" and certificate leaf = H"{fingerprint}"'
+        yield keychain, fingerprint, requirement
     finally:
         current = shlex.split(run(["/usr/bin/security", "list-keychains", "-d", "user"]))
         if current != original_search_list:
             run(["/usr/bin/security", "list-keychains", "-d", "user", "-s", *original_search_list])
-
-    requirement = f'designated => identifier "{IDENTIFIER}" and certificate leaf = H"{fingerprint}"'
-    return keychain, fingerprint, requirement
 
 
 def build_app(app, temporary, release, sdk_name, universal=False):
@@ -165,8 +176,9 @@ def main():
     destination = options.sign_existing.resolve() if options.sign_existing else BUILD / "Walk & Roll.app"
     with (SIGNING / "build.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        keychain, fingerprint, requirement = signing_identity()
-        with tempfile.TemporaryDirectory(prefix=".walk-and-roll-", dir=destination.parent) as temporary:
+        with signing_identity() as (keychain, fingerprint, requirement), tempfile.TemporaryDirectory(
+            prefix=".walk-and-roll-", dir=destination.parent
+        ) as temporary:
             app = Path(temporary) / destination.name
             if options.sign_existing:
                 shutil.copytree(destination, app, symlinks=True)
