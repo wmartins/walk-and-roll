@@ -7,6 +7,28 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct RecordingCompositionTests {
+    @Test("Rendered pixels match a Rec. 709 video buffer's declared color profile")
+    func renderedVideoBufferColors() throws {
+        let bounds = CGRect(x: 0, y: 0, width: 32, height: 32)
+        let source = CIImage(color: CIColor(red: 0.08, green: 0.22, blue: 0.35)).cropped(to: bounds)
+        var buffer: CVPixelBuffer?
+        let status = CVPixelBufferCreate(nil, 32, 32, kCVPixelFormatType_32BGRA, nil, &buffer)
+        try #require(status == kCVReturnSuccess)
+        let output = try #require(buffer)
+        for (key, value) in [
+            (kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2),
+            (kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2),
+            (kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_709_2)
+        ] {
+            CVBufferSetAttachment(output, key, value, .shouldPropagate)
+        }
+        RecordingCompositor().render(source, to: output, bounds: bounds)
+        let actual = try TestMedia.render(CIImage(cvPixelBuffer: output), in: bounds)
+        let expected = try TestMedia.render(source, in: bounds)
+        let difference = try TestMedia.meanDifference(actual, expected)
+        #expect(difference < 2, "Video buffer metadata must describe its rendered pixels")
+    }
+
     @Test("Source, preview and export preserve flat colors across the first frames")
     func previewExportColorParity() async throws {
         let fixture = try await MediaFixture()
@@ -14,16 +36,31 @@ struct RecordingCompositionTests {
         let prepared = try await MP4Export.prepare(fixture.screen, resolution: .sharper)
         let output = fixture.file("colors.mp4")
         try await MP4Export.save(fixture.screen, resolution: .sharper, to: output) { _ in }
+        let track = try #require(try await AVURLAsset(url: output).loadTracks(withMediaType: .video).first)
+        let format = try #require(try await track.load(.formatDescriptions).first)
+        // Check the actual MP4's color tags as well as its displayed pixels: macOS
+        // 15 and newer systems must interpret the same SDR output consistently.
+        for (key, expected) in [
+            (kCMFormatDescriptionExtension_ColorPrimaries, kCVImageBufferColorPrimaries_ITU_R_709_2),
+            (kCMFormatDescriptionExtension_TransferFunction, kCVImageBufferTransferFunction_ITU_R_709_2),
+            (kCMFormatDescriptionExtension_YCbCrMatrix, kCVImageBufferYCbCrMatrix_ITU_R_709_2)
+        ] {
+            #expect(CMFormatDescriptionGetExtension(format, extensionKey: key) as? String == expected as String)
+        }
         // A flat patch isolates gamma/color shifts from H.264 edge and chroma artifacts.
         let patch = CGRect(x: 8, y: 8, width: 16, height: 16)
         for seconds in [0.0, 1.0 / 30, 0.1, 1.5] {
             let source = try await TestMedia.frame(fixture.screen, at: seconds)
-            let preview = try await TestMedia.frame(prepared, at: seconds)
-            let encoded = try await TestMedia.frame(output, at: seconds)
-            let sourceDifference = try TestMedia.meanDifference(source, preview, region: patch)
+            let preview = try await TestMedia.sample(prepared, at: seconds)
+            let encoded = try await TestMedia.sample(output, at: seconds)
+            let sourceDifference = try TestMedia.meanDifference(source, preview.image, region: patch)
             #expect(sourceDifference < 3, "Preview color mismatch at \(seconds) seconds")
-            let difference = try TestMedia.meanDifference(preview, encoded, region: patch)
+            let difference = try TestMedia.meanDifference(preview.image, encoded.image, region: patch)
             #expect(difference < 3, "Color mismatch at \(seconds) seconds")
+            if sourceDifference >= 3 || difference >= 3 {
+                try TestMedia.saveParityFailure(fixture: fixture, output: output, seconds: seconds,
+                    difference: difference, preview: preview, encoded: encoded, source: source, threshold: 3)
+            }
         }
     }
 

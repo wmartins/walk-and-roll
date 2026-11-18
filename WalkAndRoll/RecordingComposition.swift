@@ -188,6 +188,13 @@ enum RecordingImageSampling {
 final class RecordingCompositor: NSObject, AVVideoCompositing {
     private let context = CIContext()
     private let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+    // Derive the video profile from Core Video's tags. The similarly named
+    // Core Graphics ITU-R 709 space can use a different display transfer curve.
+    private let outputColorSpace = CVImageBufferCreateColorSpaceFromAttachments([
+        kCVImageBufferColorPrimariesKey: kCVImageBufferColorPrimaries_ITU_R_709_2,
+        kCVImageBufferTransferFunctionKey: kCVImageBufferTransferFunction_ITU_R_709_2,
+        kCVImageBufferYCbCrMatrixKey: kCVImageBufferYCbCrMatrix_ITU_R_709_2
+    ] as CFDictionary)!.takeRetainedValue()
     // NSCache synchronizes access and may evict images between concurrent render requests.
     nonisolated(unsafe) private let badgeCache: NSCache<NSString, CIImage> = {
         let cache = NSCache<NSString, CIImage>()
@@ -269,8 +276,13 @@ final class RecordingCompositor: NSObject, AVVideoCompositing {
             image = (fade.outputImage ?? badge).composited(over: image)
         }
 
-        context.render(image, to: output, bounds: bounds, colorSpace: colorSpace)
+        render(image, to: output, bounds: bounds)
         request.finish(withComposedVideoFrame: output)
+    }
+
+    func render(_ image: CIImage, to output: CVPixelBuffer, bounds: CGRect) {
+        let renderColorSpace = CVImageBufferGetColorSpace(output)?.takeUnretainedValue() ?? outputColorSpace
+        context.render(image, to: output, bounds: bounds, colorSpace: renderColorSpace)
     }
 
     private static let ringDuration = 0.4

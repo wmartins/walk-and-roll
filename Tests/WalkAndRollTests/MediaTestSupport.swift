@@ -129,13 +129,16 @@ enum TestMedia {
 
     static func saveParityFailure(
         fixture: MediaFixture, output: URL, seconds: Double, difference: Double,
-        preview: (image: CGImage, actualTime: CMTime), encoded: (image: CGImage, actualTime: CMTime)
+        preview: (image: CGImage, actualTime: CMTime), encoded: (image: CGImage, actualTime: CMTime),
+        source: CGImage? = nil, threshold: Double = 9
     ) throws {
         guard let path = ProcessInfo.processInfo.environment["WALK_AND_ROLL_TEST_ARTIFACTS"] else { return }
         let directory = URL(fileURLWithPath: path, isDirectory: true)
             .appendingPathComponent("preview-export-\(seconds)-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        for (name, image) in [("preview", preview.image), ("encoded", encoded.image)] {
+        var images = [("preview", preview.image), ("encoded", encoded.image)]
+        if let source { images.append(("source", source)) }
+        for (name, image) in images {
             let png = try #require(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
             try png.write(to: directory.appendingPathComponent("\(name).png"))
         }
@@ -147,7 +150,9 @@ enum TestMedia {
         Requested time: \(seconds)
         Preview actual time: \(preview.actualTime.seconds)
         Encoded actual time: \(encoded.actualTime.seconds)
-        Mean RGB difference: \(difference) (required: < 9)
+        Preview color space: \(String(describing: preview.image.colorSpace))
+        Encoded color space: \(String(describing: encoded.image.colorSpace))
+        Mean RGB difference: \(difference) (required: < \(threshold))
         """
         try details.write(to: directory.appendingPathComponent("comparison.txt"), atomically: true, encoding: .utf8)
         print("Saved frame comparison diagnostics to \(directory.path)")
