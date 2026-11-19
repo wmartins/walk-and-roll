@@ -78,7 +78,7 @@ final class Recorder: NSObject {
         configuration.allowedPickerModes = [.singleWindow, .singleDisplay]
         configuration.allowsChangingSelectedContent = false
         picker.defaultConfiguration = configuration
-        picker.maximumStreamCount = 1
+        picker.maximumStreamCount = 2
         picker.add(self)
     }
 
